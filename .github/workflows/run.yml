@@ -150,13 +150,6 @@ jobs:
         fi
         echo "Markdown转换完成 / Markdown conversion completed"
         
-    - name: Update file list
-      if: steps.dedup_check.outputs.has_new_content == 'true'
-      run: |
-        echo "更新文件列表... / Updating file list..."
-        ls data/*.jsonl | sed 's|data/||' > assets/file-list.txt
-        echo "文件列表更新完成 / File list updated"
-
     - name: Generate password hash and inject into config
       if: steps.dedup_check.outputs.has_new_content == 'true'
       run: |
@@ -330,14 +323,19 @@ jobs:
           git commit -m "chore: initialize data branch"
           git push origin data
         fi
-        
-        # 从临时目录恢复数据文件 / Restore data files from temporary directory
-        # 确保目录存在 / Ensure directories exist
+
+        # 从临时目录恢复当天生成的数据
         mkdir -p data assets
         cp -r /tmp/data_files/data/* data/ 2>/dev/null || true
-        cp /tmp/data_files/assets/file-list.txt assets/ 2>/dev/null || true
-        
-        # 只添加数据文件 / Only add data files
+
+        # 此时已经在 data 分支，data/ 中包含全部历史数据
+        # 根据完整 data 目录重新生成文件列表
+        find data -maxdepth 1 -type f -name '*.jsonl' -printf '%f\n' | sort > assets/file-list.txt
+
+        echo "文件列表已重新生成:"
+        tail -20 assets/file-list.txt
+
+        # 添加数据文件和完整文件列表
         git add data/* 2>/dev/null || true
         git add assets/file-list.txt 2>/dev/null || true
         
