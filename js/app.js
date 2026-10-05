@@ -697,9 +697,13 @@ function selectLanguageForDate(date, preferredLanguage = null) {
 
 async function fetchAvailableDates() {
   try {
-    // 从 data 分支获取文件列表
-    const fileListUrl = DATA_CONFIG.getDataUrl('assets/file-list.txt');
-    const response = await fetch(fileListUrl);
+    // 加时间戳，避免浏览器缓存旧的文件列表
+    const fileListUrl =
+      `${DATA_CONFIG.getDataUrl('assets/file-list.txt')}?t=${Date.now()}`;
+
+    const response = await fetch(fileListUrl, {
+      cache: 'no-store'
+    });
     if (!response.ok) {
       console.error('Error fetching file list:', response.status);
       return [];
