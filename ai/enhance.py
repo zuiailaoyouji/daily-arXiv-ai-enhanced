@@ -11,6 +11,7 @@ import argparse
 from tqdm import tqdm
 
 import langchain_core.exceptions
+from pydantic import ValidationError
 from langchain_openai import ChatOpenAI
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -125,6 +126,31 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
         # Merge partial data with defaults to ensure all fields exist
         item['AI'] = {**default_ai_fields, **partial_data}
         print(f"Using partial AI data for {item.get('id', 'unknown')}: {list(partial_data.keys())}", file=sys.stderr)
+
+    except ValidationError as e:
+        # Structured output is mostly valid, but the model may occasionally
+        # omit one required field. Recover the partial response and fill
+        # missing fields with defaults.
+        partial_data = {}
+
+        try:
+            for error in e.errors():
+                input_data = error.get("input")
+                if isinstance(input_data, dict):
+                    partial_data.update(input_data)
+                    break
+        except Exception:
+            pass
+
+        item["AI"] = {**default_ai_fields, **partial_data}
+
+        print(
+            f"Validation error for {item.get('id', 'unknown')}; "
+            f"using partial AI data with defaults. "
+            f"Recovered fields: {list(partial_data.keys())}",
+            file=sys.stderr,
+        )
+    
     except Exception as e:
         print(f"Unexpected error for {item.get('id', 'unknown')}: {e}", file=sys.stderr)
         raise RuntimeError(f"AI request failed for {item.get('id', 'unknown')}") from e
