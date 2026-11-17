@@ -21,6 +21,27 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
         
+    - name: Load recent history for deduplication
+      run: |
+        # Paper history lives on the data branch, while this job checks out main.
+        # Load the previous seven UTC days before running check_stats.py.
+        data_ref=$(git ls-remote --heads origin refs/heads/data)
+        if [ -z "$data_ref" ]; then
+          echo "No data branch yet; starting without paper history."
+          exit 0
+        fi
+
+        git fetch --no-tags --depth=1 origin refs/heads/data
+        mkdir -p data
+        for offset in {1..7}; do
+          history_date=$(date -u -d "$offset days ago" "+%Y-%m-%d")
+          history_path="data/${history_date}.jsonl"
+          if git cat-file -e "FETCH_HEAD:$history_path" 2>/dev/null; then
+            git show "FETCH_HEAD:$history_path" > "$history_path"
+            echo "Loaded history: $history_path"
+          fi
+        done
+
     - name: Crawl arXiv papers
       id: crawl_step
       run: |
