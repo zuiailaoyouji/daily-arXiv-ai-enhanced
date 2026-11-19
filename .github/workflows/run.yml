@@ -5,9 +5,19 @@ name: arXiv-daily-ai-enhanced
 
 on:
   schedule:
+    # Beijing time: primary 08:07, backup attempts at 12:37 and 18:37.
     - cron: "7 0 * * *"
+    - cron: "37 4,10 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/run.yml"
   workflow_dispatch:
 
+
+concurrency:
+  group: arxiv-daily-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -16,22 +26,31 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Install dependencies
+    - name: Check daily publication and load recent history
+      id: daily_status
+      env:
+        LANGUAGE: ${{ vars.LANGUAGE }}
       run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        uv sync
+        today=$(date -u "+%Y-%m-%d")
+        echo "crawl_date=$today" >> "$GITHUB_OUTPUT"
         
-    - name: Load recent history for deduplication
-      run: |
-        # Paper history lives on the data branch, while this job checks out main.
-        # Load the previous seven UTC days before running check_stats.py.
         data_ref=$(git ls-remote --heads origin refs/heads/data)
         if [ -z "$data_ref" ]; then
+          echo "needs_update=true" >> "$GITHUB_OUTPUT"
           echo "No data branch yet; starting without paper history."
           exit 0
         fi
-
+        
         git fetch --no-tags --depth=1 origin refs/heads/data
+        daily_file="data/${today}_AI_enhanced_${LANGUAGE}.jsonl"
+        if git cat-file -e "FETCH_HEAD:$daily_file" 2>/dev/null &&
+           [ "$(git cat-file -s "FETCH_HEAD:$daily_file")" -gt 0 ]; then
+          echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          echo "Papers for $today are already published; skipping duplicate processing."
+          exit 0
+        fi
+        
+        echo "needs_update=true" >> "$GITHUB_OUTPUT"
         mkdir -p data
         for offset in {1..7}; do
           history_date=$(date -u -d "$offset days ago" "+%Y-%m-%d")
@@ -42,11 +61,18 @@ jobs:
           fi
         done
 
+    - name: Install dependencies
+      if: steps.daily_status.outputs.needs_update == 'true'
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        uv sync
+        
     - name: Crawl arXiv papers
+      if: steps.daily_status.outputs.needs_update == 'true'
       id: crawl_step
       run: |
         source .venv/bin/activate
-        today=$(date -u "+%Y-%m-%d")
+        today=${{ steps.daily_status.outputs.crawl_date }}
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
         
         # 检查今日文件是否已存在，如存在则删除 / Check if today's file exists, delete if found
@@ -80,6 +106,7 @@ jobs:
         echo "爬取完成 / Crawling completed"
         
     - name: Check for duplicates
+      if: steps.daily_status.outputs.needs_update == 'true'
       id: dedup_check
       run: |
         source .venv/bin/activate
@@ -207,7 +234,9 @@ jobs:
 
     - name: Summary
       run: |
-        if [ "${{ steps.dedup_check.outputs.has_new_content }}" = "true" ]; then
+        if [ "${{ steps.daily_status.outputs.needs_update }}" = "false" ]; then
+          echo "ℹ️ 今日论文已发布，跳过重复处理 / Today's papers are already published; skipped duplicate processing"
+        elif [ "${{ steps.dedup_check.outputs.has_new_content }}" = "true" ]; then
           echo "✅ 工作流完成：去重发现新内容并成功处理 / Workflow completed: Smart deduplication found new content and processed successfully"
         else
           case "${{ steps.dedup_check.outputs.skip_reason }}" in
